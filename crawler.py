@@ -1,6 +1,8 @@
 from selenium import webdriver
 from bs4 import BeautifulSoup
 import sys
+import pymongo
+from secrets import database_uri
 
 # Retrieves the href for all matches on the page
 def get_matches(card):
@@ -16,12 +18,63 @@ def get_agents(map):
     results = []
     agents = map.find_all(lambda tag: tag.name == "td" and tag.get("class") == ["mod-agents"])
     for agent in agents:
-        agent_name = agent.find("img")
-        results.append(agent_name.get("title"))
+        if agent.find("img") == None:
+            print ("No data found.")
+            return []
+        else:
+            agent_name = agent.find("img")
+            results.append(agent_name.get("title"))
+
     return results
 
+def create_schema(match, collection):
+    if len(match) > 3:
+        for map in range(2, len(match)):
+            map_data = [
+                {
+                    "map": match[map][0],
+                    "team": sorted(match[map][1:6]),
+                    "count": 1
+                },
+                {
+                    "map": match[map][0],
+                    "team": sorted(match[map][6:]),
+                    "count": 1
+                }
+            ]
+            for data in map_data:
+                collection.update_one(
+                    filter = { 'map': data['map'], 'team': data['team'] }, 
+                    update = { '$inc': { 'count': 1 } },
+                    upsert = True,
+                )
+    else:
+        map_data = [
+            {
+                "map": match[2][0],
+                "team": sorted(match[2][1:6]),
+                "count": 1
+            },
+            {
+                "map": match[2][0],
+                "team": sorted(match[2][6:]),
+                "count": 1
+            }  
+        ]
+        for data in map_data:
+            collection.update_one(
+                filter = { 'map': data['map'], 'team': data['team'] }, 
+                update = { '$inc': { 'count': 1 } },
+                upsert = True,
+            )
+
+    
 
 def main():
+
+    client = pymongo.MongoClient(database_uri)
+    db = client.get_database('valorteams')
+    map_collection = db.get_collection("teams")
 
     driver = webdriver.Chrome("./chromedriver")
 
@@ -46,6 +99,8 @@ def main():
         driver.get(link)
         content = driver.page_source
         soup = BeautifulSoup(content, "html.parser")
+        
+        print( link )
 
         all_maps = []
 
@@ -71,11 +126,15 @@ def main():
             data = []
             agents = []
             agents = get_agents(map)
-            data.append(map_name_text)
-            data += agents
-            all_maps.append(data)
+            if len(agents) > 0:
+                data.append(map_name_text)
+                data += agents
+                all_maps.append(data)
 
-        print (all_maps)
+        if (len(all_maps) > 2):
+            create_schema(all_maps, map_collection)
+
+    print ("Database update successful.")
 
     ## Exit
     driver.close()
